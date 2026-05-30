@@ -1,0 +1,6 @@
+{
+  "name": "COGO",
+  "description": "Secure, peer-to-peer smart ride-sharing platform connecting verified institutional commuters to optimize journeys and share fuel costs.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
