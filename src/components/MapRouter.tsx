@@ -221,6 +221,140 @@ function LiveRouteLines({
   return null;
 }
 
+interface AutocompleteSearchBoxProps {
+  onPlaceSelect: (place: { name: string; location: google.maps.LatLngLiteral }) => void;
+}
+
+function AutocompleteSearchBox({ onPlaceSelect }: AutocompleteSearchBoxProps) {
+  const map = useMap();
+  const placesLib = useMapsLibrary('places');
+  const [inputValue, setInputValue] = useState('');
+  const [suggestions, setSuggestions] = useState<google.maps.places.AutocompletePrediction[]>([]);
+  const [sessionToken, setSessionToken] = useState<google.maps.places.AutocompleteSessionToken | null>(null);
+
+  useEffect(() => {
+    if (!placesLib) return;
+    setSessionToken(new placesLib.AutocompleteSessionToken());
+  }, [placesLib]);
+
+  useEffect(() => {
+    if (!placesLib || !inputValue || !sessionToken) {
+      setSuggestions([]);
+      return;
+    }
+
+    const autocompleteService = new placesLib.AutocompleteService();
+    const timeoutId = setTimeout(() => {
+      autocompleteService.getPlacePredictions({
+        input: inputValue,
+        sessionToken: sessionToken,
+        locationBias: map?.getCenter() || undefined,
+        componentRestrictions: { country: 'in' }
+      }, (predictions, status) => {
+        if (status === 'OK' && predictions) {
+          setSuggestions(predictions);
+        } else {
+          setSuggestions([]);
+        }
+      });
+    }, 150);
+
+    return () => clearTimeout(timeoutId);
+  }, [inputValue, placesLib, sessionToken, map]);
+
+  const handleSelectSuggestion = async (suggestion: google.maps.places.AutocompletePrediction) => {
+    setInputValue(suggestion.description);
+    setSuggestions([]);
+
+    try {
+      const geocoder = new google.maps.Geocoder();
+      geocoder.geocode({ placeId: suggestion.place_id }, (results, status) => {
+        if (status === 'OK' && results?.[0]?.geometry?.location) {
+          const loc = results[0].geometry.location;
+          const matchedPlace = {
+            name: results[0].formatted_address || suggestion.description,
+            location: { lat: loc.lat(), lng: loc.lng() }
+          };
+          onPlaceSelect(matchedPlace);
+          if (map) {
+            map.panTo(matchedPlace.location);
+            map.setZoom(14);
+          }
+        }
+      });
+    } catch (err) {
+      console.error("Geocoding failed for place ID:", err);
+    }
+
+    if (placesLib) {
+      setSessionToken(new placesLib.AutocompleteSessionToken());
+    }
+  };
+
+  return (
+    <div className="absolute top-4 left-4 z-10 w-full max-w-sm flex flex-col gap-1">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (suggestions.length > 0) {
+            handleSelectSuggestion(suggestions[0]);
+          } else if (inputValue) {
+            try {
+              const geocoder = new google.maps.Geocoder();
+              geocoder.geocode({ address: inputValue }, (results, status) => {
+                if (status === 'OK' && results?.[0]?.geometry?.location) {
+                  const loc = results[0].geometry.location;
+                  const matchedPlace = {
+                    name: results[0].formatted_address || inputValue,
+                    location: { lat: loc.lat(), lng: loc.lng() }
+                  };
+                  onPlaceSelect(matchedPlace);
+                  if (map) {
+                    map.panTo(matchedPlace.location);
+                    map.setZoom(14);
+                  }
+                }
+              });
+            } catch (err) {
+              console.error("Geocoding failed for direct query:", err);
+            }
+          }
+        }}
+        className="w-full flex gap-2 bg-[#161618]/95 p-2 rounded-xl border border-zinc-805 shadow-xl backdrop-blur-md"
+      >
+        <input
+          type="text"
+          placeholder="Search on Google Maps (e.g. Gachibowli)..."
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          className="flex-1 bg-[#0A0A0B] border border-zinc-800 text-zinc-150 text-xs px-3 py-2.5 rounded-lg focus:outline-none focus:border-cyan-500 font-sans"
+        />
+        <button
+          type="submit"
+          className="bg-cyan-500 hover:bg-cyan-400 text-black font-bold px-3.5 rounded-lg transition"
+        >
+          <Search className="w-4 h-4" />
+        </button>
+      </form>
+
+      {suggestions.length > 0 && (
+        <ul className="w-full bg-[#111113]/98 border border-zinc-805 rounded-xl overflow-hidden shadow-2xl divide-y divide-zinc-900 z-50 backdrop-blur-md max-h-60 overflow-y-auto">
+          {suggestions.map((s) => (
+            <li
+              key={s.place_id}
+              onClick={() => handleSelectSuggestion(s)}
+              className="p-3 text-xs text-zinc-350 hover:text-white hover:bg-cyan-950/25 cursor-pointer transition flex flex-col gap-0.5"
+            >
+              <div className="font-semibold text-left">{s.structured_formatting.main_text}</div>
+              <div className="text-[10px] text-zinc-500 text-left font-sans">{s.structured_formatting.secondary_text}</div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function MapRouter({
   selectedRide,
   selectedRequest,
@@ -440,24 +574,7 @@ export default function MapRouter({
             {/* Live Google Map container */}
             <div className="relative w-full h-[600px]">
               {/* Autocomplete Locations Search Box inside map overlay */}
-              <form
-                onSubmit={handleLocationSearch}
-                className="absolute top-4 left-4 z-10 w-full max-w-sm flex gap-2 bg-[#161618]/95 p-2 rounded-xl border border-zinc-800 shadow-xl"
-              >
-                <input
-                  type="text"
-                  placeholder="Drop coordinate pin (e.g. Gachibowli, Hitec City)..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="flex-1 bg-[#0A0A0B] border border-zinc-805 text-zinc-200 text-xs px-3 py-2 rounded-lg focus:outline-none focus:border-cyan-500"
-                />
-                <button
-                  type="submit"
-                  className="bg-cyan-500 hover:bg-cyan-400 text-black font-bold p-2 rounded-lg transition"
-                >
-                  <Search className="w-4 h-4" />
-                </button>
-              </form>
+              <AutocompleteSearchBox onPlaceSelect={setSearchedPlace} />
 
               <Map
                 defaultCenter={{ lat: 17.4435, lng: 78.3773 }}
