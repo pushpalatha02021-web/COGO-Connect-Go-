@@ -1,0 +1,144 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Core validation helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Checking if the user matches the referenced owner ID
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Path Variable & ID Hardening
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Entity validator blueprints
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['id', 'name', 'email', 'isVerified', 'verificationStatus'])
+        && data.keys().size() <= 15
+        && data.id is string
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 200
+        && data.isVerified is bool
+        && data.verificationStatus in ['unverified', 'pending', 'verified']
+        && (data.role == null || data.role in ['student', 'employee'])
+        && (data.mfaEnabled == null || data.mfaEnabled is bool);
+    }
+
+    function isValidRideJourney(data) {
+      return data.keys().hasAll(['id', 'driverId', 'driverName', 'originName', 'destName', 'routePath', 'departureDate', 'status'])
+        && data.keys().size() <= 25
+        && data.id is string
+        && data.driverId is string
+        && data.driverName is string && data.driverName.size() > 0 && data.driverName.size() <= 100
+        && data.originName is string && data.originName.size() > 0 && data.originName.size() <= 200
+        && data.destName is string && data.destName.size() > 0 && data.destName.size() <= 200
+        && data.routePath is string && data.routePath.size() > 0
+        && data.status in ['scheduled', 'ongoing', 'completed'];
+    }
+
+    function isValidRiderRequest(data) {
+      return data.keys().hasAll(['id', 'riderId', 'riderName', 'originName', 'destName', 'routePath', 'status'])
+        && data.keys().size() <= 20
+        && data.id is string
+        && data.riderId is string
+        && data.riderName is string && data.riderName.size() > 0 && data.riderName.size() <= 100
+        && data.originName is string && data.originName.size() > 0 && data.originName.size() <= 200
+        && data.destName is string && data.destName.size() > 0 && data.destName.size() <= 200
+        && data.status in ['pending', 'matched', 'declined'];
+    }
+
+    function isValidRouteMatchResult(data) {
+      return data.keys().hasAll(['rideId', 'riderRequestId', 'overlapPercentage'])
+        && data.keys().size() <= 12
+        && data.rideId is string
+        && data.riderRequestId is string
+        && data.overlapPercentage is number && data.overlapPercentage >= 0 && data.overlapPercentage <= 100;
+    }
+
+    function isValidMessage(data) {
+      return data.keys().hasAll(['id', 'rideId', 'senderId', 'senderName', 'text', 'timestamp'])
+        && data.keys().size() == 6
+        && data.id is string
+        && data.rideId is string
+        && data.senderId is string
+        && data.senderName is string && data.senderName.size() > 0 && data.senderName.size() <= 100
+        && data.text is string && data.text.size() > 0 && data.text.size() <= 1000
+        && data.timestamp is string;
+    }
+
+    function isValidDriverTracking(data) {
+      return data.keys().hasAll(['rideId', 'lat', 'lng', 'lastUpdated'])
+        && data.keys().size() == 4
+        && data.rideId is string
+        && data.lat is number
+        && data.lng is number
+        && data.lastUpdated is string;
+    }
+
+    // Collection Security Rules
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId) && isValidUserProfile(request.resource.data);
+      allow update: if isOwner(userId) && isValidUserProfile(request.resource.data)
+                    && request.resource.data.id == resource.data.id;
+      allow delete: if false; // Accounts are durable and not deleted directly
+    }
+
+    match /active_rides/{rideId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() 
+                    && isValidId(rideId)
+                    && request.resource.data.driverId == request.auth.uid
+                    && isValidRideJourney(request.resource.data);
+      allow update: if isSignedIn() 
+                    && (resource.data.driverId == request.auth.uid || request.resource.data.status == resource.data.status)
+                    && isValidRideJourney(request.resource.data)
+                    && request.resource.data.driverId == resource.data.driverId;
+      allow delete: if isSignedIn() && resource.data.driverId == request.auth.uid;
+    }
+
+    match /active_requests/{requestId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() 
+                    && isValidId(requestId)
+                    && request.resource.data.riderId == request.auth.uid
+                    && isValidRiderRequest(request.resource.data);
+      allow update: if isSignedIn() 
+                    && (resource.data.riderId == request.auth.uid || request.resource.data.status == resource.data.status)
+                    && isValidRiderRequest(request.resource.data)
+                    && request.resource.data.riderId == resource.data.riderId;
+      allow delete: if isSignedIn() && resource.data.riderId == request.auth.uid;
+    }
+
+    match /ride_matches/{matchId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidRouteMatchResult(request.resource.data);
+      allow update, delete: if false;
+    }
+
+    match /messages/{messageId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() 
+                    && isValidId(messageId)
+                    && request.resource.data.senderId == request.auth.uid
+                    && isValidMessage(request.resource.data);
+      allow update, delete: if false;
+    }
+
+    match /driver_tracking/{rideId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() 
+                            && isValidId(rideId)
+                            && isValidDriverTracking(request.resource.data);
+      allow delete: if isSignedIn();
+    }
+  }
+}

@@ -1,0 +1,145 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account containing identity information and verification status.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "institution": { "type": "string" },
+        "role": { "type": "string", "enum": ["student", "employee"] },
+        "institutionalIdNumber": { "type": "string" },
+        "isVerified": { "type": "boolean" },
+        "verificationStatus": { "type": "string", "enum": ["unverified", "pending", "verified"] },
+        "mfaEnabled": { "type": "boolean" },
+        "rating": { "type": "number" },
+        "ridesCompleted": { "type": "number" }
+      },
+      "required": ["id", "name", "email", "isVerified", "verificationStatus"]
+    },
+    "RideJourney": {
+      "title": "RideJourney",
+      "description": "Active rides published by vehicle owners/drivers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "driverId": { "type": "string" },
+        "driverName": { "type": "string" },
+        "driverAvatar": { "type": "string" },
+        "driverInstitution": { "type": "string" },
+        "driverEmail": { "type": "string" },
+        "originName": { "type": "string" },
+        "originLat": { "type": "number" },
+        "originLng": { "type": "number" },
+        "destName": { "type": "string" },
+        "destLat": { "type": "number" },
+        "destLng": { "type": "number" },
+        "routePath": { "type": "string" },
+        "departureDate": { "type": "string" },
+        "departureTime": { "type": "string" },
+        "totalSeats": { "type": "number" },
+        "availableSeats": { "type": "number" },
+        "estimatedFuelMpg": { "type": "number" },
+        "totalEstimatedFuelCost": { "type": "number" },
+        "distanceMiles": { "type": "number" },
+        "status": { "type": "string", "enum": ["scheduled", "ongoing", "completed"] }
+      },
+      "required": ["id", "driverId", "driverName", "originName", "destName", "routePath", "departureDate", "status"]
+    },
+    "RiderRequest": {
+      "title": "RiderRequest",
+      "description": "Ride sharing requests filed by commuters or passengers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "riderId": { "type": "string" },
+        "riderName": { "type": "string" },
+        "riderAvatar": { "type": "string" },
+        "riderInstitution": { "type": "string" },
+        "originName": { "type": "string" },
+        "originLat": { "type": "number" },
+        "originLng": { "type": "number" },
+        "destName": { "type": "string" },
+        "destLat": { "type": "number" },
+        "destLng": { "type": "number" },
+        "routePath": { "type": "string" },
+        "departureDate": { "type": "string" },
+        "departureTime": { "type": "string" },
+        "requestedSeats": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "matched", "declined"] }
+      },
+      "required": ["id", "riderId", "riderName", "originName", "destName", "routePath", "status"]
+    },
+    "RouteMatchResult": {
+      "title": "RouteMatchResult",
+      "description": "High-fidelity matched results indicating overlapping paths between drivers and riders.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "rideId": { "type": "string" },
+        "riderRequestId": { "type": "string" },
+        "overlapPercentage": { "type": "number" },
+        "overlapMiles": { "type": "number" },
+        "co2SavedLbs": { "type": "number" },
+        "fuelCostSavedDollars": { "type": "number" },
+        "individualCostShare": { "type": "number" }
+      },
+      "required": ["rideId", "riderRequestId", "overlapPercentage"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Instant messaging coordinate channel for specific active rides.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "rideId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "text": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "rideId", "senderId", "senderName", "text", "timestamp"]
+    },
+    "DriverTracking": {
+      "title": "DriverTracking",
+      "description": "Geographical coordinates stream updating location updates in real-time.",
+      "type": "object",
+      "properties": {
+        "rideId": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "lastUpdated": { "type": "string" }
+      },
+      "required": ["rideId", "lat", "lng", "lastUpdated"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Secure user registration document indexed by their authentication UID."
+    },
+    "/active_rides/{rideId}": {
+      "schema": "RideJourney",
+      "description": "Scheduled or ongoing peer ride programs."
+    },
+    "/active_requests/{requestId}": {
+      "schema": "RiderRequest",
+      "description": "Commuter rideshare proposals."
+    },
+    "/ride_matches/{matchId}": {
+      "schema": "RouteMatchResult",
+      "description": "Calculated spatial route overlapping profiles."
+    },
+    "/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Encrypted or secure chat entries for real-time ride group coordinates."
+    },
+    "/driver_tracking/{rideId}": {
+      "schema": "DriverTracking",
+      "description": "Driver live tracking coordinate ticks mapped by rideIdentifier."
+    }
+  }
+}

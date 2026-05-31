@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MapNode, MAP_NODES, MAP_CONNECTIONS, PATH_ROUTES } from '../data';
 import { RideJourney, RiderRequest, RouteMatchResult } from '../types';
+import { subscribeToDriverTracking } from '../lib/firebaseService';
 import {
   Map as MapIcon,
   MapPin,
@@ -373,6 +374,45 @@ export default function MapRouter({
   const [hoveredNode, setHoveredNode] = useState<MapNode | null>(null);
   const [animatingCar, setAnimatingCar] = useState<{ x: number; y: number; progress: number } | null>(null);
 
+  // Real-time Firebase Coordinate Subscription state
+  const [liveCoordinate, setLiveCoordinate] = useState<{ lat: number, lng: number } | null>(null);
+
+  useEffect(() => {
+    if (!selectedRide) {
+      setLiveCoordinate(null);
+      return;
+    }
+
+    const unsubscribe = subscribeToDriverTracking(selectedRide.id, (coord) => {
+      setLiveCoordinate(coord);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [selectedRide?.id]);
+
+  // Find the matching SVG grid position for live coordinate mapping
+  const getLiveSvgCoord = () => {
+    if (!liveCoordinate) return null;
+    let closestNode = MAP_NODES[0];
+    let minDistance = Infinity;
+
+    for (const node of MAP_NODES) {
+      const dist = Math.sqrt(
+        Math.pow(node.lat - liveCoordinate.lat, 2) + Math.pow(node.lng - liveCoordinate.lng, 2)
+      );
+      if (dist < minDistance) {
+        minDistance = dist;
+        closestNode = node;
+      }
+    }
+
+    return closestNode ? { x: closestNode.x, y: closestNode.y } : null;
+  };
+
+  const liveSvgCoord = getLiveSvgCoord();
+
   // SVG Point generator utilities
   const getPathPoints = (pathId: string | undefined): { pointsString: string; nodes: MapNode[] } => {
     if (!pathId) return { pointsString: '', nodes: [] };
@@ -616,6 +656,15 @@ export default function MapRouter({
                   </AdvancedMarker>
                 )}
 
+                {/* 4. Real-Time GPS Tracking Driver indicator */}
+                {liveCoordinate && (
+                  <AdvancedMarker position={liveCoordinate} title="Live Commute Telemetry Vehicle Node">
+                    <div className="bg-[#10b981] border-2 border-emerald-300 text-black rounded-full p-2 animate-bounce shadow-2xl">
+                      <Car className="w-5 h-5 text-white animate-pulse" />
+                    </div>
+                  </AdvancedMarker>
+                )}
+
                 {/* Live Polylines Computer Overlay */}
                 <LiveRouteLines
                   selectedRide={selectedRide}
@@ -819,12 +868,12 @@ export default function MapRouter({
                   />
                 )}
 
-                {/* Simulated Car indicator looping driver route */}
-                {animatingCar && (
+                {/* Simulated Car or Live GPS Streamed Vehicle Indicator */}
+                {(liveSvgCoord || animatingCar) && (
                   <g>
-                    <circle cx={animatingCar.x} cy={animatingCar.y} r="16" fill="url(#nodeGrad)" className="animate-pulse" />
-                    <circle cx={animatingCar.x} cy={animatingCar.y} r="9" fill="#eab308" />
-                    <circle cx={animatingCar.x} cy={animatingCar.y} r="5" fill="#78350f" />
+                    <circle cx={liveSvgCoord ? liveSvgCoord.x : animatingCar!.x} cy={liveSvgCoord ? liveSvgCoord.y : animatingCar!.y} r="18" fill="url(#nodeGrad)" className="animate-pulse" />
+                    <circle cx={liveSvgCoord ? liveSvgCoord.x : animatingCar!.x} cy={liveSvgCoord ? liveSvgCoord.y : animatingCar!.y} r="9" fill={liveSvgCoord ? "#10b981" : "#eab308"} />
+                    <circle cx={liveSvgCoord ? liveSvgCoord.x : animatingCar!.x} cy={liveSvgCoord ? liveSvgCoord.y : animatingCar!.y} r="4" fill={liveSvgCoord ? "#064e3b" : "#78350f"} />
                   </g>
                 )}
 

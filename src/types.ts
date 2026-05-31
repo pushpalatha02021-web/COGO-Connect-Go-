@@ -90,3 +90,13 @@ export interface Message {
   text: string;
   timestamp: string;
 }
+
+export interface NotificationItem {
+  id: string;
+  type: 'match_accepted' | 'new_message';
+  title: string;
+  desc: string;
+  timestamp: string;
+  isRead: boolean;
+  linkId?: string; // Optional rideId or requestId link
+}

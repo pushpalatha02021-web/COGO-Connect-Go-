@@ -1,7 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RideJourney, RiderRequest, RouteMatchResult, Message, UserProfile } from '../types';
-import { MOCK_USERS, MOCK_RIDES, MOCK_RIDER_REQUESTS, INITIAL_MATCHES, MOCK_MESSAGES, MAP_NODES } from '../data';
+import { MOCK_USERS, MOCK_RIDES, MOCK_RIDER_REQUESTS, INITIAL_MATCHES, MOCK_MESSAGES, MAP_NODES, PATH_ROUTES } from '../data';
+import { 
+  publishDriverRide, 
+  fetchActiveRides, 
+  publishPassengerRequest, 
+  executeSpatialCorridorSearch, 
+  subscribeToRideChat, 
+  sendChatMessage, 
+  writeDriverCoordinate, 
+  subscribeToDriverTracking, 
+  setRideCorridorStatus 
+} from '../lib/firebaseService';
 import {
   Car, Calendar, Clock, MapPin, Users, Flame, Info, Check, Send, AlertTriangle,
   Coins, MessageSquare, ChevronRight, Award, Plus, Sparkles, Footprints, ShieldCheck
@@ -15,6 +26,7 @@ interface RideMatcherProps {
   onSelectRide: (ride: RideJourney | null) => void;
   onSelectRequest: (req: RiderRequest | null) => void;
   onSelectMatch: (match: RouteMatchResult | null) => void;
+  onAddNotification?: (type: 'match_accepted' | 'new_message', title: string, desc: string, linkId?: string) => void;
 }
 
 export default function RideMatcher({
@@ -24,7 +36,8 @@ export default function RideMatcher({
   activeMatch,
   onSelectRide,
   onSelectRequest,
-  onSelectMatch
+  onSelectMatch,
+  onAddNotification
 }: RideMatcherProps) {
   // Local reactive states
   const [rides, setRides] = useState<RideJourney[]>(MOCK_RIDES);
@@ -45,6 +58,58 @@ export default function RideMatcher({
   const [newTime, setNewTime] = useState('09:00 AM');
   const [newSeats, setNewSeats] = useState(4);
   const [mpgInput, setMpgInput] = useState(15);
+
+  // Load and subscribe to active rides on startup & periodically
+  useEffect(() => {
+    let active = true;
+    const syncData = async () => {
+      const liveRides = await fetchActiveRides();
+      if (active && liveRides && liveRides.length > 0) {
+        setRides(liveRides);
+      }
+    };
+    
+    syncData();
+    const timer = setInterval(syncData, 3000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  // Sync coordination chat room in real-time when a ride is selected
+  useEffect(() => {
+    if (!selectedRide) return;
+
+    const unsubscribe = subscribeToRideChat(selectedRide.id, (msgs) => {
+      setMessages(msgs);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [selectedRide?.id]);
+
+  // Simulating live telemetry coordinates to Firebase every 3 seconds when ongoing
+  useEffect(() => {
+    if (!selectedRide || selectedRide.status !== 'ongoing') return;
+
+    const pathNodes = PATH_ROUTES[selectedRide.routePath] || [];
+    if (pathNodes.length === 0) return;
+
+    let nodeIdx = 0;
+    const timer = setInterval(() => {
+      const nodeId = pathNodes[nodeIdx];
+      const nodeObj = MAP_NODES.find(n => n.id === nodeId);
+      if (nodeObj) {
+        // Stream O(1) GPS coordinate updates to live Firestore db / fallback
+        writeDriverCoordinate(selectedRide.id, nodeObj.lat, nodeObj.lng);
+      }
+      nodeIdx = (nodeIdx + 1) % pathNodes.length;
+    }, 3000);
+
+    return () => clearInterval(timer);
+  }, [selectedRide?.id, selectedRide?.status]);
 
   const handleSelectRide = (ride: RideJourney) => {
     onSelectRide(ride);
@@ -104,9 +169,14 @@ export default function RideMatcher({
       status: 'scheduled'
     };
 
-    setRides([newRide, ...rides]);
-    onSelectRide(newRide);
-    setShowCreateRideModal(false);
+    publishDriverRide(newRide).then(() => {
+      setRides([newRide, ...rides]);
+      onSelectRide(newRide);
+      setShowCreateRideModal(false);
+      if (onAddNotification) {
+        onAddNotification('match_accepted', 'Ride Posted 🚗', `Your route to ${newRide.destination.name} is active in Firebase.`, newRide.id);
+      }
+    });
   };
 
   const handleAcceptMatch = (match: RouteMatchResult) => {
@@ -168,6 +238,15 @@ export default function RideMatcher({
         timestamp: new Date().toISOString()
       };
       setMessages([...messages, systemMessage]);
+
+      if (onAddNotification) {
+        onAddNotification(
+          'match_accepted',
+          'Match Approved 🎉',
+          `${req.riderName} was added to ${ride.driverName}'s pool!`,
+          ride.id
+        );
+      }
     }
   };
 
@@ -176,17 +255,43 @@ export default function RideMatcher({
     e.preventDefault();
     if (!currentChatText.trim() || !selectedRide) return;
 
-    const newMsg: Message = {
-      id: `msg-${Date.now()}`,
-      rideId: selectedRide.id,
-      senderId: currentUser.id,
-      senderName: currentUser.name,
-      text: currentChatText,
-      timestamp: new Date().toISOString()
-    };
-
-    setMessages([...messages, newMsg]);
+    const msgText = currentChatText;
     setCurrentChatText('');
+
+    sendChatMessage(selectedRide.id, currentUser.id, currentUser.name, msgText).then((newMsg) => {
+      if (onAddNotification) {
+        onAddNotification(
+          'new_message',
+          'Message Sent 📨',
+          `Channel ${selectedRide.driverName}: "${msgText}"`,
+          selectedRide.id
+        );
+      }
+
+      // Interactive reply automation after 2.5 seconds
+      const replies = [
+        "Sounds great, looking forward to the pool! 👍",
+        "Perfect! I will reach Gachibowli circle in 10 minutes.",
+        "Got it. I'm near the pickup point, look for the vehicle.",
+        "Yes, fuel split is confirmed. See you!",
+        "I'm on my way as well, drive safely!"
+      ];
+      const randomReply = replies[Math.floor(Math.random() * replies.length)];
+      const otherPassenger = selectedRide.passengers[0] || { name: selectedRide.driverName, id: selectedRide.driverId };
+
+      setTimeout(() => {
+        sendChatMessage(selectedRide.id, otherPassenger.id, otherPassenger.name, randomReply).then(() => {
+          if (onAddNotification) {
+            onAddNotification(
+              'new_message',
+              `Message from ${otherPassenger.name} 💬`,
+              `"${randomReply}"`,
+              selectedRide.id
+            );
+          }
+        });
+      }, 2500);
+    });
   };
 
   // Filter rides based on search queries
@@ -339,6 +444,74 @@ export default function RideMatcher({
                 </div>
               </div>
             </div>
+
+            {/* Driver Secure Operations Console */}
+            {selectedRide.driverId === currentUser.id && (
+              <div className="bg-[#1C1917]/30 border-b border-zinc-800 px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className={`p-2 rounded-xl ${selectedRide.status === 'ongoing' ? 'bg-emerald-500/10 text-emerald-400 animate-pulse' : selectedRide.status === 'completed' ? 'bg-zinc-800 text-zinc-400' : 'bg-cyan-500/10 text-cyan-400'}`}>
+                    <Car className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-[9px] font-mono uppercase tracking-widest text-[#eab308] font-bold">Driver Action Panel</span>
+                    <h5 className="font-bold text-xs text-white">
+                      Commute State: {selectedRide.status.toUpperCase()}
+                    </h5>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {selectedRide.status === 'scheduled' && (
+                    <button
+                      onClick={() => {
+                        setRideCorridorStatus(selectedRide.id, 'ongoing');
+                        if (onAddNotification) {
+                          onAddNotification(
+                            'match_accepted', 
+                            'Commute Initialized 🗺️', 
+                            'Live GPS coordinate stream enabled for your peer passengers.', 
+                            selectedRide.id
+                          );
+                        }
+                      }}
+                      className="bg-cyan-500 hover:bg-cyan-400 text-black text-[10px] font-bold uppercase tracking-wider px-3.5 py-1.5 rounded-lg border border-cyan-600 cursor-pointer transition-all shadow"
+                    >
+                      Start Commute Service
+                    </button>
+                  )}
+
+                  {selectedRide.status === 'ongoing' && (
+                    <button
+                      onClick={() => {
+                        setRideCorridorStatus(selectedRide.id, 'completed');
+                        if (onAddNotification) {
+                          onAddNotification(
+                            'match_accepted', 
+                            'Destination Arrived 🏁', 
+                            'Commute successfully completed! Logging out of high-trust session.', 
+                            selectedRide.id
+                          );
+                        }
+                        // Step 4: Completion - Trip is completed, logs out session after 4.5 seconds
+                        setTimeout(() => {
+                          localStorage.removeItem('cogo_logged_in_user');
+                          window.location.reload(); 
+                        }, 4500);
+                      }}
+                      className="bg-emerald-500 hover:bg-emerald-400 text-black text-[10px] font-bold uppercase tracking-wider px-3.5 py-1.5 rounded-lg border border-emerald-600 cursor-pointer transition-all shadow animate-pulse"
+                    >
+                      Arrived at Destination
+                    </button>
+                  )}
+
+                  {selectedRide.status === 'completed' && (
+                    <span className="text-[10px] font-mono text-zinc-500 border border-zinc-800 bg-[#0A0A0B] px-3 py-1 rounded-lg">
+                      Session Terminated Successfully
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Ride Details Grid */}
             <div className="px-6 py-6 grid grid-cols-1 md:grid-cols-2 gap-6 border-b border-zinc-800">

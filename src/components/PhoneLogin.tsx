@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Phone, Lock, ShieldCheck, ArrowRight, RefreshCw, MessageSquare, User, Building2, Smartphone } from 'lucide-react';
+import { Phone, Lock, ShieldCheck, ArrowRight, RefreshCw, MessageSquare, User, Building2, Smartphone, Navigation } from 'lucide-react';
 import { UserProfile } from '../types';
 import { MOCK_USERS } from '../data';
+import { loginUserSession, isFirebaseConfigured } from '../lib/firebaseService';
 
 interface PhoneLoginProps {
   onLoginSuccess: (user: UserProfile) => void;
@@ -10,7 +11,7 @@ interface PhoneLoginProps {
 
 export default function PhoneLogin({ onLoginSuccess }: PhoneLoginProps) {
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
+  const [step, setStep] = useState<'welcome' | 'phone' | 'otp'>('welcome');
   const [generatedOtp, setGeneratedOtp] = useState('');
   const [enteredOtp, setEnteredOtp] = useState('');
   const [countdown, setCountdown] = useState(60);
@@ -30,13 +31,13 @@ export default function PhoneLogin({ onLoginSuccess }: PhoneLoginProps) {
   // Handle countdown timer for resending OTP
   useEffect(() => {
     let timer: any;
-    if (otpSent && countdown > 0) {
+    if (step === 'otp' && countdown > 0) {
       timer = setInterval(() => {
         setCountdown((prev) => prev - 1);
       }, 1000);
     }
     return () => clearInterval(timer);
-  }, [otpSent, countdown]);
+  }, [step, countdown]);
 
   const validatePhone = (num: string) => {
     return /^[6-9]\d{9}$/.test(num); // Standard 10-digit Indian phone validator
@@ -54,7 +55,7 @@ export default function PhoneLogin({ onLoginSuccess }: PhoneLoginProps) {
       // Generate a sweet 6-digit code
       const otp = Math.floor(100000 + Math.random() * 900000).toString();
       setGeneratedOtp(otp);
-      setOtpSent(true);
+      setStep('otp');
       setCountdown(60);
       setLoading(false);
 
@@ -108,9 +109,10 @@ export default function PhoneLogin({ onLoginSuccess }: PhoneLoginProps) {
         };
       }
 
-      // Persist log-in session
-      localStorage.setItem('cogo_logged_in_user', JSON.stringify(finalUser));
-      onLoginSuccess(finalUser);
+      // Persist log-in session via Firebase Service
+      loginUserSession(finalUser).then((savedUser) => {
+        onLoginSuccess(savedUser);
+      });
     }, 1000);
   };
 
@@ -127,66 +129,144 @@ export default function PhoneLogin({ onLoginSuccess }: PhoneLoginProps) {
 
       {/* Main Login Card container */}
       <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.5, ease: 'easeOut' }}
         className="w-full max-w-md bg-[#0F0F11] border border-zinc-800/80 rounded-3xl p-6 md:p-8 shadow-[0_20px_50px_rgba(0,0,0,0.5)] relative z-10"
         id="cogo-login-card"
       >
-        {/* Brand Header */}
-        <div className="text-center mb-6">
-          <div className="inline-flex bg-cyan-500/10 border border-cyan-500/20 p-3.5 rounded-2xl text-cyan-400 mb-3 shadow-[0_0_20px_rgba(6,182,212,0.15)]">
-            <Smartphone className="w-8 h-8" />
-          </div>
-          <h2 className="text-2xl font-black text-white tracking-tight">COGO SECURE ACCESS</h2>
-          <p className="text-xs text-zinc-400 mt-1.5 max-w-xs mx-auto">
-            Log in using physical mobile verification OTP to enter Hyderabad's peer-to-peer network.
-          </p>
-        </div>
-
-        {/* Dynamic OTP Dispatch Simulation Notification Drawer */}
-        <AnimatePresence>
-          {notification && (
-            <motion.div
-              initial={{ opacity: 0, height: 0, y: -10 }}
-              animate={{ opacity: 1, height: 'auto', y: 0 }}
-              exit={{ opacity: 0, height: 0, y: -10 }}
-              className="mb-5 bg-cyan-950/40 border border-cyan-500/20 rounded-xl p-3.5 text-xs text-cyan-350 shadow-inner"
-            >
-              <div className="flex items-start gap-2.5">
-                <MessageSquare className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5 animate-bounce" />
-                <div className="flex-1">
-                  <p className="font-semibold text-cyan-200">Device Carrier Stream (Simulated)</p>
-                  <p className="mt-1 font-mono text-[11px] leading-relaxed select-text bg-black/40 p-2 rounded-lg border border-cyan-950">
-                    {notification}
-                  </p>
-                  <div className="mt-2 flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        setEnteredOtp(generatedOtp);
-                        setNotification(null);
-                      }}
-                      className="text-[10px] bg-cyan-400 text-black px-2 py-0.5 rounded font-bold hover:bg-cyan-300 transition cursor-pointer"
-                    >
-                      Auto-Fill Code
-                    </button>
-                    <span className="text-[9px] text-zinc-500 font-medium">Valid for 60s</span>
-                  </div>
-                </div>
+        {/* Render Brand Header and Notification only when NOT in welcome step */}
+        {step !== 'welcome' && (
+          <>
+            {/* Brand Header */}
+            <div className="text-center mb-6">
+              <div className="inline-flex bg-cyan-500/10 border border-cyan-500/20 p-3.5 rounded-2xl text-cyan-400 mb-3 shadow-[0_0_20px_rgba(6,182,212,0.15)]">
+                <Smartphone className="w-8 h-8" />
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+              <h2 className="text-2xl font-black text-white tracking-tight">COGO SECURE ACCESS</h2>
+              <p className="text-xs text-zinc-400 mt-1.5 max-w-xs mx-auto">
+                Log in using physical mobile verification OTP to enter Hyderabad's peer-to-peer network.
+              </p>
+            </div>
+
+            {/* Dynamic OTP Dispatch Simulation Notification Drawer */}
+            <AnimatePresence>
+              {notification && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0, y: -10 }}
+                  animate={{ opacity: 1, height: 'auto', y: 0 }}
+                  exit={{ opacity: 0, height: 0, y: -10 }}
+                  className="mb-5 bg-cyan-950/40 border border-cyan-500/20 rounded-xl p-3.5 text-xs text-cyan-350 shadow-inner"
+                >
+                  <div className="flex items-start gap-2.5">
+                    <MessageSquare className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5 animate-bounce" />
+                    <div className="flex-1">
+                      <p className="font-semibold text-cyan-200">Device Carrier Stream (Simulated)</p>
+                      <p className="mt-1 font-mono text-[11px] leading-relaxed select-text bg-black/40 p-2 rounded-lg border border-cyan-950">
+                        {notification}
+                      </p>
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setEnteredOtp(generatedOtp);
+                            setNotification(null);
+                          }}
+                          className="text-[10px] bg-cyan-400 text-black px-2 py-0.5 rounded font-bold hover:bg-cyan-303 transition cursor-pointer"
+                        >
+                          Auto-Fill Code
+                        </button>
+                        <span className="text-[9px] text-zinc-500 font-medium">Valid for 60s</span>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </>
+        )}
 
         {/* Error reporting */}
-        {errorMsg && (
+        {errorMsg && step !== 'welcome' && (
           <div className="mb-4 bg-rose-500/10 border border-rose-500/20 p-3 rounded-xl text-xs text-rose-400 font-medium font-sans">
             ❌ {errorMsg}
           </div>
         )}
 
         <AnimatePresence mode="wait">
-          {!otpSent ? (
+          {step === 'welcome' && (
+            <motion.div
+              key="step-welcome"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              transition={{ duration: 0.35 }}
+              className="text-center space-y-5"
+            >
+              <div className="relative inline-flex mb-1">
+                <div className="absolute inset-0 bg-cyan-500/15 rounded-3xl blur-xl animate-pulse" />
+                <div className="relative bg-gradient-to-br from-cyan-950 to-zinc-950 border border-cyan-500/30 p-4.5 rounded-3xl text-cyan-400 shadow-[0_0_25px_rgba(6,182,212,0.15)]">
+                  <Navigation className="w-11 h-11 transform rotate-45" />
+                </div>
+              </div>
+
+              <div>
+                <span className="text-[9px] uppercase font-mono tracking-widest bg-cyan-950/60 text-cyan-350 border border-cyan-900/40 px-3 py-1 rounded-full font-bold">
+                  HYDERABAD TRANSIT NODE
+                </span>
+                <h1 className="text-3xl font-black text-white mt-3 tracking-tight">
+                  COGO <span className="text-cyan-400">P2P</span>
+                </h1>
+                <p className="text-xs text-zinc-400 mt-1.5 max-w-xs mx-auto leading-relaxed font-sans">
+                  The smart, high-trust commuter route network. Overpass path intersect matching and verified fuel sharing.
+                </p>
+              </div>
+
+              {/* Verified badges */}
+              <div className="space-y-3 max-w-sm mx-auto text-left border-y border-zinc-850/60 py-4 my-2">
+                <div className="flex items-start gap-3">
+                  <div className="p-1.5 bg-cyan-500/10 rounded-lg text-cyan-400 shrink-0 mt-0.5 border border-cyan-500/10">
+                    <ShieldCheck className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-zinc-200">Institutional Circles Only</h4>
+                    <p className="text-[10px] text-zinc-400 leading-normal font-sans">Vetted peer access matching students, employees and researchers at IIIT, IIT, and Google Hyderabad.</p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <div className="p-1.5 bg-emerald-500/10 rounded-lg text-emerald-400 shrink-0 mt-0.5 border border-emerald-500/10">
+                    <Smartphone className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-zinc-200">Secure Phone OTP Handshake</h4>
+                    <p className="text-[10px] text-zinc-400 leading-normal font-sans">Passwordless entry. Verify your identity with visual OTP stream simulation in real-time.</p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <div className="p-1.5 bg-amber-500/10 rounded-lg text-amber-400 shrink-0 mt-0.5 border border-amber-500/10">
+                    <ArrowRight className="w-4 h-4 transform rotate-45" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-zinc-200">Overlapping Corridor Match</h4>
+                    <p className="text-[10px] text-zinc-400 leading-normal font-sans">COGO evaluates path intersection overlaps like Begumpet Axis or Outer Ring Road to cut congestion.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Enter CTA */}
+              <button
+                type="button"
+                onClick={() => setStep('phone')}
+                className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-black uppercase tracking-widest text-xs py-3.5 rounded-xl transition duration-200 flex items-center justify-center gap-2 cursor-pointer shadow-[0_5px_15px_rgba(6,182,212,0.2)] active:translate-y-0.5 select-none font-mono"
+              >
+                <span>Initialize Verification</span>
+                <ArrowRight className="w-4 h-4 animate-pulse" />
+              </button>
+            </motion.div>
+          )}
+
+          {step === 'phone' && (
             <motion.div
               key="step-phone"
               initial={{ opacity: 0, x: -10 }}
@@ -229,7 +309,7 @@ export default function PhoneLogin({ onLoginSuccess }: PhoneLoginProps) {
                         className={`p-3 rounded-xl border transition cursor-pointer flex items-center justify-between ${
                           selectedMockUser.id === user.id
                             ? 'bg-cyan-950/20 border-cyan-500/40 text-cyan-200'
-                            : 'bg-[#121214] border-zinc-850 text-zinc-300 hover:border-zinc-800'
+                            : 'bg-[#121214] border-zinc-855 text-zinc-300 hover:border-zinc-800'
                         }`}
                       >
                         <div className="flex items-center gap-2.5">
@@ -253,7 +333,7 @@ export default function PhoneLogin({ onLoginSuccess }: PhoneLoginProps) {
                       </div>
                     ))}
                   </div>
-                  <div className="bg-[#121214] p-3 rounded-xl border border-zinc-850/60 text-[11px] text-zinc-400 leading-relaxed font-sans mt-2">
+                  <div className="bg-[#121214] p-3 rounded-xl border border-zinc-850/60 text-[11px] text-zinc-400 leading-relaxed font-sans mt-2 text-left">
                     🔒 Selecting a character automatically feeds their pre-authorized virtual phone number to initiate simulated OTP transit handshake bypass.
                   </div>
                 </div>
@@ -261,7 +341,7 @@ export default function PhoneLogin({ onLoginSuccess }: PhoneLoginProps) {
                 <div className="space-y-4">
                   {/* Custom Info form */}
                   <div>
-                    <label className="block text-xs font-bold text-zinc-350 mb-1.5">Your Name</label>
+                    <label className="block text-xs font-bold text-zinc-350 mb-1.5 text-left">Your Name</label>
                     <div className="relative">
                       <User className="absolute left-3 top-2.5 w-4 h-4 text-zinc-550" />
                       <input
@@ -276,13 +356,13 @@ export default function PhoneLogin({ onLoginSuccess }: PhoneLoginProps) {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-zinc-350 mb-1.5">Affiliation Circle</label>
+                    <label className="block text-xs font-bold text-zinc-350 mb-1.5 text-left">Affiliation Circle</label>
                     <div className="relative">
                       <Building2 className="absolute left-3 top-2.5 w-4 h-4 text-zinc-550" />
                       <select
                         value={customInstitution}
                         onChange={(e) => setCustomInstitution(e.target.value)}
-                        className="w-full bg-[#0A0A0B] border border-zinc-800 focus:border-cyan-500 focus:outline-none text-zinc-300 text-xs pl-9 pr-3 py-2.5 rounded-xl cursor-pointer"
+                        className="w-full bg-[#0A0A0B] border border-zinc-800 focus:border-cyan-500 focus:outline-none text-zinc-300 text-xs pl-9 pr-3 py-2.5 rounded-xl cursor-pointer font-sans"
                       >
                         <option value="IIIT Hyderabad">IIIT Hyderabad</option>
                         <option value="IIT Hyderabad">IIT Hyderabad</option>
@@ -293,7 +373,7 @@ export default function PhoneLogin({ onLoginSuccess }: PhoneLoginProps) {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-zinc-350 mb-1.5">Mobile Phone Number</label>
+                    <label className="block text-xs font-bold text-zinc-350 mb-1.5 text-left">Mobile Phone Number</label>
                     <div className="flex gap-2">
                       <span className="bg-[#0A0A0B] border border-zinc-805 text-zinc-400 text-xs px-3.5 py-2.5 rounded-xl flex items-center font-bold font-mono">
                         +91
@@ -316,7 +396,7 @@ export default function PhoneLogin({ onLoginSuccess }: PhoneLoginProps) {
                 type="button"
                 onClick={handleSendOtp}
                 disabled={loading}
-                className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-bold uppercase tracking-wider text-xs py-3.5 rounded-xl transition duration-200 flex items-center justify-center gap-2 cursor-pointer shadow-[0_5px_15px_rgba(6,182,212,0.15)] active:translate-y-0.5 disabled:opacity-40 select-none"
+                className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-bold uppercase tracking-wider text-xs py-3.5 rounded-xl transition duration-200 flex items-center justify-center gap-2 cursor-pointer shadow-[0_5px_15px_rgba(6,182,212,0.15)] active:translate-y-0.5 disabled:opacity-40 select-none font-mono"
               >
                 {loading ? (
                   <RefreshCw className="w-4 h-4 animate-spin" />
@@ -327,8 +407,21 @@ export default function PhoneLogin({ onLoginSuccess }: PhoneLoginProps) {
                   </>
                 )}
               </button>
+
+              {/* Back to intro screen */}
+              <div className="pt-2 text-center">
+                <button
+                  type="button"
+                  onClick={() => { setStep('welcome'); setErrorMsg(null); }}
+                  className="text-xs text-zinc-450 hover:text-zinc-200 cursor-pointer transition font-semibold"
+                >
+                  ← Back to overview screen
+                </button>
+              </div>
             </motion.div>
-          ) : (
+          )}
+
+          {step === 'otp' && (
             <motion.div
               key="step-otp"
               initial={{ opacity: 0, x: -10 }}
@@ -338,16 +431,16 @@ export default function PhoneLogin({ onLoginSuccess }: PhoneLoginProps) {
             >
               {/* Back Button */}
               <button
-                onClick={() => { setOtpSent(false); setEnteredOtp(''); }}
-                className="text-xs text-zinc-450 hover:text-zinc-200 pb-1 cursor-pointer transition flex items-center gap-1.5"
+                onClick={() => { setStep('phone'); setEnteredOtp(''); }}
+                className="text-xs text-zinc-450 hover:text-zinc-200 pb-1 cursor-pointer transition flex items-center gap-1.5 font-semibold"
               >
-                ← Back to profile setup
+                ← Back to credentials setup
               </button>
 
               <div className="bg-[#121214] p-3.5 rounded-2xl border border-zinc-850 flex items-center justify-between text-xs text-zinc-350">
-                <div>
+                <div className="text-left">
                   <span className="block font-semibold text-zinc-400">Verifying Destination:</span>
-                  <span className="font-mono text-zinc-200 bg-[#0A0A0B] px-1.5 py-0.5 border border-zinc-800 rounded inline-block mt-1">
+                  <span className="font-mono text-zinc-200 bg-[#0A0A0B] px-1.5 py-0.5 border border-zinc-805 rounded inline-block mt-1">
                     +91 {loginMode === 'quick' ? '98765 43210' : phoneNumber}
                   </span>
                 </div>
@@ -362,7 +455,7 @@ export default function PhoneLogin({ onLoginSuccess }: PhoneLoginProps) {
                   Enter 6-Digit OTP Code
                 </label>
                 <div className="relative">
-                  <Lock className="absolute left-4 top-3.5 w-4 h-4 text-zinc-500" />
+                  <Lock className="absolute left-4 top-3.5 w-4 h-4 text-zinc-550" />
                   <input
                     type="text"
                     maxLength={6}
@@ -379,7 +472,7 @@ export default function PhoneLogin({ onLoginSuccess }: PhoneLoginProps) {
                 type="button"
                 onClick={handleVerifyOtp}
                 disabled={loading || enteredOtp.length < 6}
-                className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold uppercase tracking-wider text-xs py-3.5 rounded-xl transition duration-200 flex items-center justify-center gap-2 cursor-pointer shadow-[0_5px_15px_rgba(16,185,129,0.15)] active:translate-y-0.5 disabled:opacity-40 select-none"
+                className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-bold uppercase tracking-wider text-xs py-3.5 rounded-xl transition duration-200 flex items-center justify-center gap-2 cursor-pointer shadow-[0_5px_15px_rgba(16,185,129,0.15)] active:translate-y-0.5 disabled:opacity-40 select-none font-mono"
               >
                 {loading ? (
                   <RefreshCw className="w-4 h-4 animate-spin" />
